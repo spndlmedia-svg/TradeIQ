@@ -1,0 +1,27 @@
+[Unit]
+Description=TradeIQ for Kleankickx
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=tradeiq
+Group=tradeiq
+WorkingDirectory=/opt/tradeiq
+EnvironmentFile=/etc/tradeiq.env
+# Dedicated Node 24 runtime; preserve the system Node used by other services.
+ExecStart=/opt/tradeiq-node/bin/node /opt/tradeiq/server.js
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=45
+StateDirectory=tradeiq
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/tradeiq
+
+[Install]
+WantedBy=multi-user.target

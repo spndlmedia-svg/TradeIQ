@@ -1,0 +1,39 @@
+# Paid single-instance service: persistent SQLite disk and outbound SMTP.
+# Deploy as a Render Blueprint connected to this repository.
+services:
+  - type: web
+    name: tradeiq-kleankickx
+    runtime: node
+    plan: starter
+    numInstances: 1
+    autoDeployTrigger: off
+    buildCommand: npm ci --ignore-scripts --no-audit --no-fund && npm run check && npm test
+    startCommand: npm start
+    healthCheckPath: /api/health
+    disk:
+      name: tradeiq-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: NODE_VERSION
+        value: 24.19.0
+      - key: NODE_ENV
+        value: production
+      - key: NPM_CONFIG_PRODUCTION
+        value: "false"
+      - key: HOST
+        value: 0.0.0.0
+      - key: COOKIE_SECURE
+        value: "true"
+      - key: APP_PASSWORD
+        generateValue: true
+      - key: DATABASE_PATH
+        value: /var/data/tradeiq.sqlite
+      - key: SMTP_HOST
+        value: smtp.hostinger.com
+      - key: SMTP_PORT
+        value: "465"
+      - key: SMTP_USER
+        value: gordon@kleankickx.com
+      - key: SMTP_FROM_NAME
+        value: Gordon | Kleankickx
