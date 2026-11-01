@@ -103,6 +103,7 @@ async function openDraft(id) {
     const link = document.createElement('a'); link.href = current.website; link.textContent = 'Visit business website ↗'; link.target = '_blank'; link.rel = 'noopener noreferrer'; detail.append(link);
   }
   const isLocked = locked(current);
+  $('#resolve-button').hidden = current.status !== 'uncertain';
   for (const id of ['draft-email','draft-subject','draft-body','contact-name','contact-role','save-draft','send-button']) $(`#${id}`).disabled = isLocked;
   $('#suppress-button').disabled = !current.email || ['sending', 'uncertain', 'suppressed'].includes(current.status);
   $('#send-note').textContent = current.status === 'uncertain' ? 'The previous send was not confirmed. Check Hostinger before taking further action. Automatic retry is disabled.' : current.sent_at ? `SMTP accepted this email on ${new Date(current.sent_at).toLocaleString()}. Acceptance does not confirm delivery or a reply.` : current.status === 'suppressed' ? 'This address is marked do not contact. Sending is disabled.' : !config.mailReady ? 'Hostinger is not connected yet. You can edit and save this draft now.' : `Sending from ${config.sender}. Verify the recipient and review this message before sending.`;
@@ -196,3 +197,17 @@ $('#verify-mail').addEventListener('click', () => busy($('#verify-mail'), async 
   $('#mail-status').textContent = '● SMTP login verified · delivery still requires a test';
   toast(result.message);
 }));
+
+$('#resolve-button').addEventListener('click', () => {
+  $('#resolve-form').reset();
+  $('#resolve-dialog').showModal();
+});
+$('#resolve-form').addEventListener('submit', event => {
+  event.preventDefault();
+  busy($('#resolve-form button[type="submit"]'), async () => {
+    current = await api(`/leads/${current.id}/reconcile`, 'POST', { reason: $('#resolve-reason').value, confirmNotAccepted: $('#resolve-confirm').checked });
+    $('#resolve-dialog').close();
+    await refresh(); await openDraft(current.id);
+    toast('Previous attempt returned to a draft. No email was sent. Review it before sending.');
+  });
+});

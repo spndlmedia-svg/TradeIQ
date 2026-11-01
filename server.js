@@ -198,10 +198,21 @@ export function createApp({ dbPath = ':memory:', config = process.env, mailer, d
             return json(200, { added, found: results.length });
           } finally { searchBusy = false; }
         }
-        const match = /^\/api\/leads\/([^/]+)(?:\/(draft|send|suppress))?$/.exec(path);
+        const match = /^\/api\/leads\/([^/]+)(?:\/(draft|send|suppress|reconcile))?$/.exec(path);
         if (match) {
           let row = lead(match[1]);
           const action = match[2];
+          if (action === 'reconcile' && req.method === 'POST') {
+            const input = await readJson(req);
+            if (row.status !== 'uncertain' || row.sent_at) throw fail(409, 'Only an unresolved attempt without confirmed SMTP acceptance can be reviewed.');
+            if (input.confirmNotAccepted !== true || !['authentication_rejected', 'provider_confirmed_not_accepted'].includes(input.reason)) {
+              throw fail(400, 'Confirm from the original SMTP failure or provider logs that this attempt was not accepted. An empty inbox alone is not confirmation.');
+            }
+            if (db.prepare('SELECT 1 FROM suppressions WHERE email=?').get(row.email)) throw fail(409, 'This address is on your do-not-contact list.');
+            db.prepare("UPDATE leads SET status='draft' WHERE id=? AND status='uncertain'").run(row.id);
+            event(row.id, `operator_confirmed_not_accepted:${input.reason}`);
+            return json(200, lead(row.id));
+          }
           if (!action && req.method === 'PATCH') {
             const input = await readJson(req);
             if (['sending', 'sent', 'uncertain', 'suppressed'].includes(row.status)) throw fail(409, 'This lead is locked to protect its outreach history.');
@@ -238,7 +249,7 @@ export function createApp({ dbPath = ':memory:', config = process.env, mailer, d
             if (!transport) throw fail(503, 'Connect the Hostinger SMTP mailbox in environment settings before sending.');
             if (!emailPattern.test(row.email) || !row.subject || !row.body) throw fail(400, 'Add a verified email, subject, and message first.');
             if (db.prepare('SELECT 1 FROM suppressions WHERE email=?').get(row.email)) throw fail(409, 'This address is on your do-not-contact list.');
-            if (db.prepare("SELECT 1 FROM leads WHERE email=? AND status IN ('sent','sending','uncertain')").get(row.email)) throw fail(409, 'This address already has a sent or unresolved email. Check Hostinger before contacting it again.');
+            if (db.prepare("SELECT 1 FROM leads WHERE email=? AND status IN ('sent','sending','uncertain')").get(row.email)) throw fail(409, 'This address already has a sent or unresolved email. In All leads, open the original record marked Check mailbox and resolve it only after confirming non-acceptance. Sent emails cannot be unlocked.');
             const updated = db.prepare("UPDATE leads SET status='sending' WHERE id=? AND status='draft'").run(row.id);
             if (!updated.changes) throw fail(409, 'Only an unsent draft can be sent.');
             try {

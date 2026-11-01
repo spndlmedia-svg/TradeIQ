@@ -144,3 +144,22 @@ test('personal email providers are accepted and SMTP authentication failures rem
   assert.equal((await app.request(`/leads/${row.id}/send`, 'POST', { confirm: true })).data.status, 'sent');
   assert.equal(messages[0].to, 'test@gmail.com');
 });
+
+test('uncertain attempts require explicit non-acceptance review; accepted emails stay locked', async t => {
+  let interrupted = true;
+  const app = await start({ mailer: { sendMail: async message => {
+    if (interrupted) throw new Error('Lost connection');
+    return { accepted: [message.to], messageId: 'reconciled-test' };
+  } } }); t.after(app.close);
+  const row = (await app.request('/leads', 'POST', { name: 'Recovery test', email: 'recovery@gmail.com' })).data;
+  await app.request(`/leads/${row.id}/draft`, 'POST', {});
+  await app.request(`/leads/${row.id}/send`, 'POST', { confirm: true });
+  assert.equal((await app.request(`/leads/${row.id}/reconcile`, 'POST', {})).status, 400);
+  assert.equal((await app.request('/leads')).data[0].status, 'uncertain');
+  const review = { confirmNotAccepted: true, reason: 'authentication_rejected' };
+  const resolved = await app.request(`/leads/${row.id}/reconcile`, 'POST', review);
+  assert.equal(resolved.data.status, 'draft');
+  interrupted = false;
+  assert.equal((await app.request(`/leads/${row.id}/send`, 'POST', { confirm: true })).data.status, 'sent');
+  assert.equal((await app.request(`/leads/${row.id}/reconcile`, 'POST', review)).status, 409);
+});
