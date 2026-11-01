@@ -159,6 +159,18 @@ export function createApp({ dbPath = ':memory:', config = process.env, mailer, d
           if (!token || (sessions.get(token) || 0) < Date.now()) throw fail(401, 'Sign in to continue.');
         }
         if (path === '/api/config' && req.method === 'GET') return json(200, publicConfig());
+        if (path === '/api/mail/verify' && req.method === 'POST') {
+          await readJson(req);
+          if (!transport?.verify) throw fail(503, 'Configure Hostinger SMTP before testing the connection.');
+          try {
+            await transport.verify();
+            return json(200, { ok: true, message: 'SMTP login successful. No email was sent.' });
+          } catch (error) {
+            const code = /^[A-Z0-9_]{1,30}$/.test(error.code || '') ? error.code : 'SMTP_ERROR';
+            const responseCode = Number.isInteger(error.responseCode) ? ` / ${error.responseCode}` : '';
+            throw fail(502, `SMTP login check failed (${code}${responseCode}). Check the mailbox credentials and network connection. No email was sent.`);
+          }
+        }
         if (path === '/api/research' && req.method === 'GET') return json(200, { ...JSON.parse(db.prepare('SELECT data FROM research WHERE id=1').get().data), campaigns });
         if (path === '/api/research' && req.method === 'PATCH') {
           const input = await readJson(req);
@@ -239,7 +251,18 @@ export function createApp({ dbPath = ':memory:', config = process.env, mailer, d
               db.prepare("UPDATE leads SET status='sent',sent_at=?,message_id=? WHERE id=?").run(new Date().toISOString(), text(result.messageId), row.id);
               event(row.id, 'smtp_accepted');
               return json(200, lead(row.id));
-            } catch {
+            } catch (error) {
+              // An SMTP rejection or failed authentication proves non-acceptance.
+              // Connection failures can occur after acceptance, so retain their lock.
+              const rejected = error.code === 'EAUTH' || (Number.isInteger(error.responseCode) && error.responseCode >= 400 && error.responseCode <= 599);
+              if (rejected) {
+                db.prepare("UPDATE leads SET status='draft' WHERE id=?").run(row.id);
+                event(row.id, 'smtp_rejected');
+                const responseCode = Number.isInteger(error.responseCode) ? ` (${error.responseCode})` : '';
+                throw fail(502, error.code === 'EAUTH'
+                  ? `Hostinger rejected the mailbox login${responseCode}. Correct the SMTP credentials, restart TradeIQ, and test the connection. Your email remains an unsent draft.`
+                  : `The mail server rejected this email${responseCode}. Check the recipient, mailbox limits and sender settings. Your email remains an unsent draft.`);
+              }
               db.prepare("UPDATE leads SET status='uncertain' WHERE id=?").run(row.id);
               event(row.id, 'send_uncertain');
               throw fail(502, 'SMTP did not confirm acceptance. Check Hostinger delivery logs before retrying; this lead is locked to prevent duplicates.');

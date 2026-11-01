@@ -113,3 +113,34 @@ test('authentication, origin checks and single-recipient validation', async t =>
   assert.match(html.headers.get('content-security-policy'), /script-src 'self'/);
   assert.match(await html.text(), /Your next great connection/);
 });
+
+test('personal email providers are accepted and SMTP authentication failures remain retryable drafts', async t => {
+  let failLogin = true;
+  const messages = [];
+  const app = await start({ mailer: {
+    verify: async () => { if (failLogin) throw Object.assign(new Error('SECRET MUST NOT LEAK'), { code: 'EAUTH', responseCode: 535 }); return true; },
+    sendMail: async message => {
+      if (failLogin) throw Object.assign(new Error('SECRET MUST NOT LEAK'), { code: 'EAUTH', responseCode: 535 });
+      messages.push(message); return { accepted: [message.to], messageId: 'personal-test' };
+    }
+  } });
+  t.after(app.close);
+  const verification = await app.request('/mail/verify', 'POST', {});
+  assert.equal(verification.status, 502);
+  assert.match(verification.data.error, /EAUTH.*535/);
+  assert.doesNotMatch(verification.data.error, /SECRET/);
+  for (const email of ['test@gmail.com', 'test@yahoo.com', 'test@outlook.com']) {
+    assert.equal((await app.request('/leads', 'POST', { name: 'Personal contact test', email })).status, 201);
+  }
+  const row = (await app.request('/leads')).data.find(l => l.email === 'test@gmail.com');
+  await app.request(`/leads/${row.id}/draft`, 'POST', {});
+  const rejected = await app.request(`/leads/${row.id}/send`, 'POST', { confirm: true });
+  assert.equal(rejected.status, 502);
+  assert.match(rejected.data.error, /535/);
+  assert.doesNotMatch(rejected.data.error, /SECRET/);
+  assert.equal((await app.request('/leads')).data.find(l => l.id === row.id).status, 'draft');
+  failLogin = false;
+  assert.equal((await app.request('/mail/verify', 'POST', {})).data.ok, true);
+  assert.equal((await app.request(`/leads/${row.id}/send`, 'POST', { confirm: true })).data.status, 'sent');
+  assert.equal(messages[0].to, 'test@gmail.com');
+});

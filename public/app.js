@@ -190,3 +190,9 @@ $('#login-form').addEventListener('submit', event => {
   });
 });
 refresh().catch(error => { if (!$('#login').hidden) return; toast(error.message, true); });
+
+$('#verify-mail').addEventListener('click', () => busy($('#verify-mail'), async () => {
+  const result = await api('/mail/verify', 'POST', {});
+  $('#mail-status').textContent = '● SMTP login verified · delivery still requires a test';
+  toast(result.message);
+}));
